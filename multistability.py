@@ -33,14 +33,14 @@ from scipy.optimize import curve_fit
 
 def Integrate(A_int, r_int, y0, maxtime=50):
     def ode(t, y):
-        dydt = np.dot(np.diag(y), (r - np.dot(A, y)))  # GLV equation in matrix form
+        dydt = np.dot(np.diag(y), (r - np.dot(A, y)))  # GLV
         return dydt
     
     A = A_int.copy()
     r = r_int.copy()
     
     t_span = (0, maxtime)
-    solution = solve_ivp(ode, t_span, y0, method='Radau')  # used the Radau method
+    solution = solve_ivp(ode, t_span, y0, method='Radau')  # radau
     
     return solution
     
@@ -116,7 +116,7 @@ def cal_analytic_final_compo(A, r):
         ans = np.linalg.solve(A, r)
         return ans
     except np.linalg.LinAlgError:
-        # Handle the case when the matrix is singular (det(A) == 0)
+        # singular A
         print(A[-1])
         file_path = 'problem.pkl'
         with open(file_path, 'wb') as file:
@@ -152,6 +152,13 @@ def min_eigenvalue(matrix):
     return min_eigenvalue
 
 
+# stability from the jacobian J = -diag(N*) A_r at the fixed point
+
+def is_stable(A_r, N_r):
+    J = -np.diag(N_r) @ A_r
+    return max_eigenvalue(J) < 0
+
+
 # If you have a list of final composition and you want the survived specoes after the threshold
 
 def get_final_composition_thres(charlie, threshold):
@@ -184,7 +191,6 @@ def check_fixed_point(final_compo, A, r):
     analytic_final = cal_analytic_final_compo(A_r, r_r)
     array1 = np.array(final_compo)[np.array(final_compo) > 0]
     
-    # Use NumPy to check if all elements are positive
     check = np.all(analytic_final > 0) and np.all(np.isclose(array1, analytic_final, atol=0.1))
     
     
@@ -236,7 +242,7 @@ def get_mean__variance(A):
 
 def once(raw, unique, A, r):
     continuee = True
-    max_iterations = 100  # Maximum attempts before exiting
+    max_iterations = 100  # max tries
     iteration_count = 0
     np.random.seed(2244)
     while continuee:
@@ -251,9 +257,9 @@ def once(raw, unique, A, r):
               
                 if (np.all(final_compo>=0)):
                     if check_fixed_point(final_compo, A, r):
-                        A_r, r_r, _ = reduced(final_compo, A, r)
+                        A_r, r_r, N_r = reduced(final_compo, A, r)
                         
-                        if min_eigenvalue(A_r) > 0:
+                        if is_stable(A_r, N_r):
                             if check_uninvasibility(final_compo, A, r):
                                 continuee = False
                                 new_data = np.hstack([
@@ -274,7 +280,7 @@ def once(raw, unique, A, r):
                                 print('created')
                                 break
         
-        # If 1000 iterations are reached, exit the program
+        # stop after max_iterations
         if iteration_count >= max_iterations:
             print("Error: Maximum iterations reached without finding a solution. Exiting.",iteration_count)
             raise RuntimeError("Maximum iterations reached without finding a solution.")
@@ -289,12 +295,12 @@ def start_sim(size,repeat,matrix,r_file,raw_data,raw_unique_data,r_seed):
         with open(matrix, 'rb') as file:
             A = pickle.load(file)
     except FileNotFoundError:
-        print("Matrix is not available.")   # A must already exist (with r_i/K_i absorbed in its diagonal)
+        print("Matrix is not available.")   # diagonal of A is r_i/K_i
         return
 
     try:
         with open(r_file, 'rb') as file:
-            r = pickle.load(file)            # growth-rate vector r_i
+            r = pickle.load(file)            # growth rates
     except FileNotFoundError:
         print("r is not available.")
         return
@@ -313,14 +319,15 @@ def start_sim(size,repeat,matrix,r_file,raw_data,raw_unique_data,r_seed):
     np.random.seed(r_seed)
     i = raw_uniue[:,0][-1]
     #y0 = np.random.uniform(0,1,len(A))
-    for j in range(repeat):
-        progress_percentage = ((j + 1) / repeat) * 100
+    n_done = 0      # initial conditions that reached a state
+    while n_done < repeat:
         timee = 300
         tom = 5000
         y0 = np.abs(np.random.uniform(0,1,len(A))) #randomly generate the initial condition
     
         data = Integrate(A,r,y0,maxtime=timee )
         got_it = False
+        recorded = False
         for h in range(10):
             if not(all_feasible(data)):
                 #print('found')
@@ -338,6 +345,7 @@ def start_sim(size,repeat,matrix,r_file,raw_data,raw_unique_data,r_seed):
                         if all(binary == (raw_uniue[p][(2*len(A))+1:(3*len(A))+1])) and np.all(np.isclose(final_compo, raw_uniue[p][(len(A))+1:(2*len(A))+1], atol=0.1)):
                             Check_point = False
                             break_outer = True
+                            recorded = True
                             #print('copied')
                             new_data = np.hstack([([p]),y0,final_compo,([element]),([timee])])
                             raw = np.vstack([raw,new_data])
@@ -349,8 +357,8 @@ def start_sim(size,repeat,matrix,r_file,raw_data,raw_unique_data,r_seed):
                     final_compo = get_final_composition(data,element,A,r)
                     if (np.all(final_compo>=0)):
                         if check_fixed_point(final_compo,A,r):
-                            A_r,r_r,_= reduced(final_compo,A,r)
-                            if (min_eigenvalue(A_r) > 0):
+                            A_r,r_r,N_r= reduced(final_compo,A,r)
+                            if is_stable(A_r, N_r):
                                 if check_uninvasibility(final_compo,A,r):
                                     #print('found')
                                     i += 1
@@ -361,21 +369,24 @@ def start_sim(size,repeat,matrix,r_file,raw_data,raw_unique_data,r_seed):
                                     raw = np.vstack([raw,new_data])
                                     #print(raw,raw_uniue,'gotit')
                                     Check_point = False
+                                    recorded = True
                                     break
-            if not(Check_point):
+            if recorded:
                 break
             #tom += 100
             timee += tom
             data = Integrate(A,r,data.y[:,-1],maxtime=tom )
-        if j % 1000 == 0:
-            file_path = raw_data
-            with open(file_path, 'rb') as file:
-                existing_raw = pickle.load(file)
-            combined_data = np.vstack([existing_raw, raw[:-1]])
-            with open(file_path, 'wb') as file:
-                pickle.dump(combined_data, file)
-            del combined_data
-            raw = raw[-1:]
+        if recorded:
+            n_done += 1
+            if n_done % 1000 == 0:
+                file_path = raw_data
+                with open(file_path, 'rb') as file:
+                    existing_raw = pickle.load(file)
+                combined_data = np.vstack([existing_raw, raw[:-1]])
+                with open(file_path, 'wb') as file:
+                    pickle.dump(combined_data, file)
+                del combined_data
+                raw = raw[-1:]
             
             
     file_path = raw_data
