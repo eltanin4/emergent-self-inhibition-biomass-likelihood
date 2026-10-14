@@ -29,6 +29,7 @@ from scipy.optimize import curve_fit
 
 
 
+
 #Generalized Lotka-Volterra equations
 
 def Integrate(A_int, r_int, y0, maxtime=50):
